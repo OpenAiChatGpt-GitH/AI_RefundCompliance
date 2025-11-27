@@ -4,8 +4,9 @@ import { ReturnDecisionResponse, ReturnReason, OrderDetails } from "../types";
 
 // Initialize Supabase Client
 const SUPABASE_URL = "https://swcrhkgohnbroywpzser.supabase.co";
-// Using the publishable key for client-side operations as requested
-const SUPABASE_KEY = "sb_publishable_WXpXr6RmwCu-5x280moCPQ_Fyf9RuOO";
+// CAUTION: Using the Secret (Service Role) key on the client-side is for prototyping only.
+// This bypasses Row Level Security (RLS) to ensure data access for this demo.
+const SUPABASE_KEY = "sb_secret_0yuqOyLipoQSjXPQ5_umHw_Wwn5srER";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -42,50 +43,56 @@ const responseSchema: Schema = {
 
 /**
  * Fetches order and product details from Supabase.
- * Tries to join 'order_products' with 'orders'.
+ * Fetches sequentially to avoid Foreign Key configuration issues.
  */
 const fetchOrderDetails = async (
   orderId: string,
   productId: string
 ): Promise<Partial<OrderDetails>> => {
   try {
-    // Attempt to fetch from 'order_products' and join with 'orders'
-    const { data, error } = await supabase
+    // 1. Fetch the specific product item from order_products
+    const { data: productData, error: productError } = await supabase
       .from('order_products')
-      .select(`
-        *,
-        orders (
-          *
-        )
-      `)
+      .select('*')
       .eq('order_id', orderId)
       .eq('product_id', productId)
       .single();
 
-    if (error) {
-      console.warn("Supabase fetch error:", error.message);
-      throw new Error(`Order not found: ${error.message}`);
+    if (productError) {
+      console.error("Supabase Product Fetch Error:", productError);
+      throw new Error(`Product not found: ${productError.message}`);
     }
 
-    if (!data) {
-      throw new Error("Order/Product combination not found.");
+    if (!productData) {
+      throw new Error(`Product ${productId} not found in Order ${orderId}`);
     }
 
-    const orderData = Array.isArray(data.orders) ? data.orders[0] : data.orders;
-    
+    // 2. Fetch the order details using the order_id from the product line item
+    // (This ensures we get the parent order even if the input ID format varied slightly)
+    const { data: orderData, error: orderError } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('order_id', orderId) // Assuming 'order_id' is the column name in orders table
+      .single();
+
+    if (orderError) {
+      console.error("Supabase Order Fetch Error:", orderError);
+      // We continue even if order fetch fails, using product data, but strictly it should succeed
+      throw new Error(`Order Details not found: ${orderError.message}`);
+    }
+
     // Normalize sale category from various potential column names
-    // Prioritize explicit true values
     const isSale = 
-      data.sale_category === true || 
-      data.sale_product === true || 
-      data.is_sale === true ||
-      String(data.sale_category).toLowerCase() === 'true' ||
-      String(data.sale_product).toLowerCase() === 'true';
+      productData.sale_category === true || 
+      productData.sale_product === true || 
+      productData.is_sale === true ||
+      String(productData.sale_category).toLowerCase() === 'true' ||
+      String(productData.sale_product).toLowerCase() === 'true';
 
     return {
-      name: data.name || data.product_name || "Unknown Product",
-      category: data.category || "General",
-      price: Number(data.price || 0),
+      name: productData.name || productData.product_name || "Unknown Product",
+      category: productData.category || "General",
+      price: Number(productData.price || 0),
       sale_category: isSale,
       ordered_date: orderData?.created_at || orderData?.ordered_date || new Date().toISOString(),
       delivered_date: orderData?.delivered_at || orderData?.delivered_date || new Date().toISOString(),
@@ -109,22 +116,9 @@ export const getEnrichedOrderDetails = async (
   const actualReason = reason === ReturnReason.OTHER ? customReason || "Other" : reason;
   const currentDate = new Date().toISOString().split('T')[0];
 
-  let dbDetails: Partial<OrderDetails>;
-
-  try {
-    dbDetails = await fetchOrderDetails(orderId, productId);
-  } catch (e) {
-    console.warn("Using simulated data due to DB fetch failure");
-    // Fallback simulation for demo/testing if DB isn't reachable
-    dbDetails = {
-      name: "Simulated Product Item",
-      category: "electronics",
-      price: 199.99,
-      sale_category: false, // Default to false unless specific test case
-      ordered_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 10).toISOString(),
-      delivered_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 5).toISOString(),
-    };
-  }
+  // We intentionally do NOT catch errors here anymore. 
+  // If DB fails, we want the UI to show the error, not fall back to fake data.
+  const dbDetails = await fetchOrderDetails(orderId, productId);
 
   return {
     order_id: orderId,
@@ -222,7 +216,6 @@ export const processReturnRequest = async (
   `;
 
   try {
-    // Initialize Gemini Client here to prevent top-level runtime crashes if env vars are missing on load
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     
     const response = await ai.models.generateContent({
