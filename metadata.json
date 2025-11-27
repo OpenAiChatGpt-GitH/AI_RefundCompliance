@@ -1,0 +1,5 @@
+{
+  "name": "Copy of AI Refund Compliance Checker",
+  "description": "An intelligent return processing system powered by Google Gemini (replacing the requested Mistral agent for better integration with Google AI Studio). It analyzes return reasons and generates policy decisions.",
+  "requestFramePermissions": []
+}
