@@ -2,9 +2,6 @@ import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
 import { ReturnDecisionResponse, ReturnReason, OrderDetails } from "../types";
 
-// Initialize Gemini Client
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 // Initialize Supabase Client
 const SUPABASE_URL = "https://swcrhkgohnbroywpzser.supabase.co";
 // Using the publishable key for client-side operations as requested
@@ -225,6 +222,9 @@ export const processReturnRequest = async (
   `;
 
   try {
+    // Initialize Gemini Client here to prevent top-level runtime crashes if env vars are missing on load
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: prompt,
